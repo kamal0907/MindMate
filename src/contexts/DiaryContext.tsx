@@ -28,16 +28,30 @@ export const DiaryProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const { user } = useAuth();
 
   const refreshEntries = async () => {
-    if (!user) return;
+    if (!user) {
+      console.log('No user found, skipping diary entries fetch');
+      setEntries([]);
+      setError(null);
+      return;
+    }
     
     try {
       setLoading(true);
       const fetchedEntries = await getDiaryEntries();
-      setEntries(fetchedEntries);
+      // Convert date strings to Date objects
+      const processedEntries = fetchedEntries.map(entry => ({
+        ...entry,
+        date: new Date(entry.date)
+      }));
+      setEntries(processedEntries);
       setError(null);
     } catch (err) {
       console.error('Error fetching diary entries:', err);
-      setError('Failed to fetch diary entries. Please try again later.');
+      if (err instanceof Error) {
+        setError(err.message || 'Failed to fetch diary entries. Please try again later.');
+      } else {
+        setError('Failed to fetch diary entries. Please try again later.');
+      }
     } finally {
       setLoading(false);
     }
@@ -48,13 +62,27 @@ export const DiaryProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [user]);
 
   const addEntry = async (entry: Omit<DiaryEntry, 'id' | 'date'>) => {
+    if (!user) {
+      throw new Error('User must be authenticated to add diary entries');
+    }
+
     try {
       const updatedEntries = await addDiaryEntry(entry);
-      setEntries(updatedEntries);
+      // Convert date strings to Date objects
+      const processedEntries = updatedEntries.map(entry => ({
+        ...entry,
+        date: new Date(entry.date)
+      }));
+      setEntries(processedEntries);
       setError(null);
     } catch (err) {
       console.error('Error adding diary entry:', err);
-      setError('Failed to add diary entry. Please try again later.');
+      if (err instanceof Error) {
+        setError(err.message || 'Failed to add diary entry. Please try again later.');
+      } else {
+        setError('Failed to add diary entry. Please try again later.');
+      }
+      throw err;
     }
   };
 

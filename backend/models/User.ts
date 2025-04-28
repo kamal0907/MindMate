@@ -1,5 +1,10 @@
 import mongoose from 'mongoose';
 
+interface Emotion {
+  type: string;
+  intensity: number;
+}
+
 const diaryEntrySchema = new mongoose.Schema({
   id: {
     type: String,
@@ -17,13 +22,15 @@ const diaryEntrySchema = new mongoose.Schema({
   emotions: [{
     type: {
       type: String,
-      required: true
+      required: true,
+      enum: ['happy', 'sad', 'angry', 'anxious', 'calm', 'excited', 'grateful', 'hopeful', 'neutral']
     },
     intensity: {
       type: Number,
       required: true,
       min: 1,
-      max: 10
+      max: 10,
+      default: 5
     }
   }],
   isPublic: {
@@ -82,9 +89,15 @@ const userSchema = new mongoose.Schema({
   },
   displayName: {
     type: String,
-    required: true
+    required: true,
+    default: function() {
+      return this.email?.split('@')[0] || 'Anonymous User';
+    }
   },
-  photoURL: String,
+  photoURL: {
+    type: String,
+    default: ''
+  },
   diaryEntries: [diaryEntrySchema],
   gratitudeEntries: [gratitudeEntrySchema],
   chatHistory: [chatMessageSchema],
@@ -96,10 +109,24 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
+}, {
+  timestamps: true,
+  validateBeforeSave: true
 });
 
-// Update the updatedAt timestamp before saving
+// Pre-validate middleware to ensure displayName is never empty
+userSchema.pre('validate', function(next) {
+  if (!this.displayName || this.displayName.trim() === '') {
+    this.displayName = this.email?.split('@')[0] || 'Anonymous User';
+  }
+  next();
+});
+
+// Pre-save middleware to ensure displayName is never empty
 userSchema.pre('save', function(next) {
+  if (!this.displayName || this.displayName.trim() === '') {
+    this.displayName = this.email?.split('@')[0] || 'Anonymous User';
+  }
   this.updatedAt = new Date();
   next();
 });
@@ -109,7 +136,7 @@ userSchema.path('diaryEntries').validate(function(entries: any[]) {
   return entries.every(entry => 
     entry.content && 
     entry.date && 
-    entry.emotions.every(emotion => 
+    entry.emotions.every((emotion: Emotion) => 
       emotion.type && 
       emotion.intensity >= 1 && 
       emotion.intensity <= 10

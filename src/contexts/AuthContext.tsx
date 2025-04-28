@@ -1,13 +1,13 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { 
   User,
-  GoogleAuthProvider,
   signInWithPopup,
   signOut,
   onAuthStateChanged,
-  getIdToken
+  getIdToken,
+  GoogleAuthProvider
 } from 'firebase/auth';
-import { auth } from '../config/firebase';
+import { auth, googleProvider } from '../config/firebase';
 import { createUser } from '../services/api';
 
 interface AuthContextType {
@@ -34,23 +34,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Function to refresh token
+  const refreshToken = async (user: User) => {
+    try {
+      const newToken = await user.getIdToken(true);
+      setToken(newToken);
+      localStorage.setItem('authToken', newToken);
+      return newToken;
+    } catch (error) {
+      console.error('Error refreshing token:', error);
+      throw error;
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
       if (user) {
         try {
-          const token = await getIdToken(user);
-          setToken(token);
-          localStorage.setItem('authToken', token);
+          const token = await refreshToken(user);
           
           // Create user in database if they don't exist
           try {
-            await createUser();
+            console.log('Attempting to create/find user in database...');
+            const userData = await createUser();
+            console.log('User created/found in database:', userData);
           } catch (error) {
             console.error('Error creating user in database:', error);
           }
         } catch (error) {
-          console.error('Error getting token:', error);
+          console.error('Error in auth state change:', error);
+          setToken(null);
+          localStorage.removeItem('authToken');
         }
       } else {
         setToken(null);
@@ -63,21 +78,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signInWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
     try {
-      const result = await signInWithPopup(auth, provider);
-      const token = await getIdToken(result.user);
-      setToken(token);
-      localStorage.setItem('authToken', token);
+      console.log('Starting Google sign in...');
+      const result = await signInWithPopup(auth, googleProvider);
+      const token = await refreshToken(result.user);
       
       // Create user in database after successful sign in
       try {
-        await createUser();
+        console.log('Creating user in database after sign in...');
+        const userData = await createUser();
+        console.log('User created in database:', userData);
       } catch (error) {
         console.error('Error creating user in database:', error);
       }
     } catch (error) {
       console.error('Error signing in with Google:', error);
+      throw error;
     }
   };
 
@@ -88,6 +104,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem('authToken');
     } catch (error) {
       console.error('Error signing out:', error);
+      throw error;
     }
   };
 
