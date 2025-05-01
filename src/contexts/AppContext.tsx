@@ -7,7 +7,6 @@ import {
   CopingSuggestion
 } from '../types';
 import { 
-  mockDiaryEntries, 
   mockChatMessages, 
   mockGratitudeEntries,
   getSuggestionsForEmotion
@@ -42,36 +41,54 @@ interface AppContextType {
   // Emergency support
   showEmergencySupport: boolean;
   setShowEmergencySupport: (show: boolean) => void;
+
+  // Loading and error state
+  isLoading: boolean;
+  error: string | null;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // State initialization
-  const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>(mockDiaryEntries);
+  const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(mockChatMessages);
   const [gratitudeEntries, setGratitudeEntries] = useState<GratitudeEntry[]>(mockGratitudeEntries);
   const [dailyEmotion, setDailyEmotion] = useState<EmotionType | null>(null);
   const [showEmergencySupport, setShowEmergencySupport] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Load data from localStorage on initial render
+  // Fetch diary entries from backend
   useEffect(() => {
-    const storedDiaryEntries = localStorage.getItem('diaryEntries');
-    const storedChatMessages = localStorage.getItem('chatMessages');
-    const storedGratitudeEntries = localStorage.getItem('gratitudeEntries');
-    const storedDailyEmotion = localStorage.getItem('dailyEmotion');
+    const fetchDiaryEntries = async () => {
+      try {
+        setIsLoading(true);
+        const response = await fetch('http://localhost:5000/api/users/diary', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch diary entries');
+        }
+        
+        const data = await response.json();
+        setDiaryEntries(data);
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching diary entries:', err);
+        setError('Failed to load diary entries. Please try again later.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-    if (storedDiaryEntries) setDiaryEntries(JSON.parse(storedDiaryEntries));
-    if (storedChatMessages) setChatMessages(JSON.parse(storedChatMessages));
-    if (storedGratitudeEntries) setGratitudeEntries(JSON.parse(storedGratitudeEntries));
-    if (storedDailyEmotion) setDailyEmotion(JSON.parse(storedDailyEmotion));
+    fetchDiaryEntries();
   }, []);
 
   // Save data to localStorage when state changes
-  useEffect(() => {
-    localStorage.setItem('diaryEntries', JSON.stringify(diaryEntries));
-  }, [diaryEntries]);
-
   useEffect(() => {
     localStorage.setItem('chatMessages', JSON.stringify(chatMessages));
   }, [chatMessages]);
@@ -85,25 +102,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [dailyEmotion]);
 
   // Diary functions
-  const addDiaryEntry = (content: string, isPublic: boolean) => {
-    const emotions = analyzeEmotions(content).map(type => ({
-      type,
-      intensity: Math.floor(Math.random() * 5) + 5 // Random intensity between 5-10
-    }));
+  const addDiaryEntry = async (content: string, isPublic: boolean) => {
+    try {
+      const emotions = analyzeEmotions(content).map(type => ({
+        type,
+        intensity: Math.floor(Math.random() * 5) + 5
+      }));
 
-    const newEntry: DiaryEntry = {
-      id: Date.now().toString(),
-      content,
-      date: getCurrentDateISOString(),
-      emotions,
-      isPublic
-    };
+      const response = await fetch('http://localhost:5000/api/users/diary', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ content, emotions, isPublic })
+      });
 
-    setDiaryEntries(prev => [newEntry, ...prev]);
+      if (!response.ok) {
+        throw new Error('Failed to add diary entry');
+      }
 
-    // Check for concerning content
-    if (detectConcerningContent(content)) {
-      setShowEmergencySupport(true);
+      const newEntry = await response.json();
+      setDiaryEntries(prev => [newEntry.entry, ...prev]);
+
+      if (detectConcerningContent(content)) {
+        setShowEmergencySupport(true);
+      }
+    } catch (err) {
+      console.error('Error adding diary entry:', err);
+      setError('Failed to add diary entry. Please try again.');
     }
   };
 
@@ -221,7 +248,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDailyEmotion,
     getCopingSuggestions,
     showEmergencySupport,
-    setShowEmergencySupport
+    setShowEmergencySupport,
+    isLoading,
+    error
   };
 
   return (

@@ -1,10 +1,10 @@
-import express, { Response, NextFunction } from 'express';
+import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { connectDB } from './config/db';
 import { auth } from './config/firebase-admin';
 import { User } from './models/User';
-import { AuthenticatedRequest, AuthMiddleware, AuthenticatedHandler } from './types';
+import { AuthMiddleware, AuthenticatedHandler } from './types';
 import { findOrCreateUser } from './utils/userUtils';
 
 dotenv.config();
@@ -33,12 +33,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Error handling middleware
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Global error handler:', err);
   res.status(500).json({
     error: 'Internal server error',
     message: err.message || 'An unexpected error occurred'
   });
+  next();
 });
 
 // Middleware to verify Firebase token
@@ -82,6 +83,18 @@ const verifyToken: AuthMiddleware = async (req, res, next) => {
   }
 };
 
+// Add these interfaces at the top of the file, after the imports
+interface DatabaseError extends Error {
+  code?: number;
+  keyPattern?: Record<string, unknown>;
+  errors?: Record<string, { message: string }>;
+}
+
+interface Emotion {
+  type: string;
+  intensity: number;
+}
+
 // Routes
 const createUser: AuthenticatedHandler = async (req, res) => {
   try {
@@ -113,28 +126,25 @@ const createUser: AuthenticatedHandler = async (req, res) => {
       });
 
       return res.json(user);
-    } catch (dbError) {
-      console.error('Database error:', {
-        error: dbError,
-        userData: {
-          uid: req.user.uid,
-          email: req.user.email,
-          name: req.user.name
+    } catch (dbError: unknown) {
+      console.error('Database error:', dbError);
+      
+      if (dbError && typeof dbError === 'object') {
+        const error = dbError as DatabaseError;
+        
+        if (error.code === 11000) {
+          return res.status(409).json({ 
+            error: 'User already exists',
+            details: error.keyPattern
+          });
         }
-      });
-      
-      if (dbError.code === 11000) {
-        return res.status(409).json({ 
-          error: 'User already exists',
-          details: dbError.keyPattern
-        });
-      }
-      
-      if (dbError.name === 'ValidationError') {
-        return res.status(400).json({ 
-          error: 'Validation error',
-          details: Object.values(dbError.errors).map(err => err.message)
-        });
+        
+        if (error.name === 'ValidationError') {
+          return res.status(400).json({ 
+            error: 'Validation error',
+            details: error.errors ? Object.values(error.errors).map(err => err.message) : undefined
+          });
+        }
       }
       
       return res.status(500).json({ 
@@ -207,12 +217,12 @@ const getUserData: AuthenticatedHandler = async (req, res) => {
             email: user.email,
             displayName: user.displayName
           });
-        } catch (createError) {
+        } catch (createError: unknown) {
           console.error('Detailed error creating user:', {
             error: createError,
-            errorName: createError.name,
-            errorMessage: createError.message,
-            errorStack: createError.stack,
+            errorName: createError instanceof Error ? createError.name : 'Unknown',
+            errorMessage: createError instanceof Error ? createError.message : 'Unknown error',
+            errorStack: createError instanceof Error ? createError.stack : undefined,
             userData: {
               uid: req.user.uid,
               email: req.user.email,
@@ -228,26 +238,28 @@ const getUserData: AuthenticatedHandler = async (req, res) => {
       }
       
       res.json(user);
-    } catch (dbError) {
+    } catch (dbError: unknown) {
       console.error('Database error:', dbError);
       
-      // Check for duplicate key error
-      if (dbError.code === 11000) {
-        return res.status(409).json({ 
-          error: 'User already exists',
-          details: dbError.keyPattern
-        });
+      if (dbError && typeof dbError === 'object') {
+        const error = dbError as DatabaseError;
+        
+        if (error.code === 11000) {
+          return res.status(409).json({ 
+            error: 'User already exists',
+            details: error.keyPattern
+          });
+        }
+        
+        if (error.name === 'ValidationError') {
+          return res.status(400).json({ 
+            error: 'Validation error',
+            details: error.errors ? Object.values(error.errors).map(err => err.message) : undefined
+          });
+        }
       }
       
-      // Check for validation error
-      if (dbError.name === 'ValidationError') {
-        return res.status(400).json({ 
-          error: 'Validation error',
-          details: Object.values(dbError.errors).map(err => err.message)
-        });
-      }
-      
-      throw dbError; // Re-throw if it's another type of error
+      throw dbError;
     }
   } catch (error) {
     console.error('Error fetching user:', error);
@@ -301,14 +313,24 @@ const getDiaryEntries: AuthenticatedHandler = async (req, res) => {
     }
 
     // Return formatted entries
-    const formattedEntries = user.diaryEntries.map(entry => ({
-      ...entry.toObject(),
-      date: entry.date.toISOString()
-    }));
+    const formattedEntries = user.diaryEntries.map(entry => {
+      const entryObj = entry.toObject ? entry.toObject() : entry;
+      return {
+        id: entryObj.id,
+        content: entryObj.content,
+        date: new Date(entryObj.date).toISOString(),
+        emotions: entryObj.emotions.map((emotion: Emotion) => ({
+          type: emotion.type,
+          intensity: emotion.intensity
+        })),
+        isPublic: entryObj.isPublic
+      };
+    });
 
     console.log('getDiaryEntries - Success:', {
       userId: user._id,
-      entryCount: formattedEntries.length
+      entryCount: formattedEntries.length,
+      entries: formattedEntries
     });
 
     return res.json(formattedEntries);
@@ -363,8 +385,8 @@ const addDiaryEntry: AuthenticatedHandler = async (req, res) => {
     const newEntry = {
       id: Date.now().toString(),
       content,
-      emotions: emotions.map(emotion => ({
-        type: String(emotion.type || 'neutral'),
+      emotions: emotions.map((emotion: { type?: string; intensity?: number }) => ({
+        type: emotion.type || 'neutral',
         intensity: typeof emotion.intensity === 'number' 
           ? Math.max(1, Math.min(10, emotion.intensity)) 
           : 5
@@ -377,10 +399,19 @@ const addDiaryEntry: AuthenticatedHandler = async (req, res) => {
     user.diaryEntries.push(newEntry);
     await user.save();
 
+    // Format the response
+    const formattedEntry = {
+      id: newEntry.id,
+      content: newEntry.content,
+      date: newEntry.date.toISOString(),
+      emotions: newEntry.emotions,
+      isPublic: newEntry.isPublic
+    };
+
     return res.json({
       success: true,
       message: 'Diary entry saved successfully',
-      entry: newEntry
+      entry: formattedEntry
     });
   } catch (error) {
     console.error('Error in addDiaryEntry:', error);

@@ -90,7 +90,7 @@ const userSchema = new mongoose.Schema({
   displayName: {
     type: String,
     required: true,
-    default: function() {
+    default: function(this: { email?: string }) {
       return this.email?.split('@')[0] || 'Anonymous User';
     }
   },
