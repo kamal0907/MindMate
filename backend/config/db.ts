@@ -9,13 +9,11 @@ export const connectDB = async () => {
   try {
     console.log('Attempting to connect to MongoDB at:', MONGODB_URI);
     
-    // Set up connection options
+    // Set up connection options compatible with Mongoose v8+
     const options = {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
-    };
+    } as mongoose.ConnectOptions;
 
     await mongoose.connect(MONGODB_URI, options);
     console.log('MongoDB connected successfully');

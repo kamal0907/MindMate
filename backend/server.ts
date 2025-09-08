@@ -6,7 +6,6 @@ import { auth } from './config/firebase-admin';
 import { User } from './models/User';
 import { AuthMiddleware, AuthenticatedHandler } from './types';
 import { findOrCreateUser } from './utils/userUtils';
-import path from 'path';
 
 dotenv.config();
 
@@ -36,14 +35,6 @@ if (NODE_ENV === 'development') {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Serve static files in production
-if (NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../dist')));
-  
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../dist/index.html'));
-  });
-}
 
 // Error handling middleware
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -526,6 +517,10 @@ const addChatMessage: AuthenticatedHandler = async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 };
+
+// Health and root routes
+app.get('/health', (req, res) => { res.status(200).json({ status: 'ok' }); });
+app.get('/', (req, res) => { res.status(200).send('API is running'); });
 
 // Register routes
 app.post('/api/users', verifyToken, createUser);
